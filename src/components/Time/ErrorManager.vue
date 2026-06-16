@@ -237,10 +237,30 @@ export default {
                 return
               }
             }
+            let newIntervals = layer.get('layerIntervals')
+            if (newIntervals) {
+              const removedIndex = layer.get('layerDateIndex')
+              newIntervals = newIntervals
+                .map((seg) => {
+                  if (seg.endIndex < removedIndex) return seg
+                  if (seg.startIndex > removedIndex) {
+                    return {
+                      ...seg,
+                      startIndex: seg.startIndex - 1,
+                      endIndex: seg.endIndex - 1,
+                    }
+                  }
+                  if (seg.startIndex === seg.endIndex) return null
+                  return { ...seg, endIndex: seg.endIndex - 1 }
+                })
+                .filter(Boolean)
+              if (newIntervals.length <= 1) newIntervals = null
+            }
             let newDefaultTimeIndex = this.findLayerIndex(
               layer.get('layerDefaultTime'),
               newExtent,
               layer.get('layerTimeStep'),
+              newIntervals,
             )
             layer.setProperties({
               layerDateArray: newExtent,
@@ -248,11 +268,13 @@ export default {
                 this.mapTimeSettings.Extent[this.mapTimeSettings.DateIndex],
                 newExtent,
                 layer.get('layerTimeStep'),
+                newIntervals,
               ),
               layerDefaultTime:
                 newDefaultTimeIndex > 0
                   ? newExtent[newDefaultTimeIndex]
                   : newExtent[0],
+              layerIntervals: newIntervals,
               layerStartTime: newExtent[0],
               layerEndTime: newExtent[newExtent.length - 1],
             })
@@ -494,6 +516,7 @@ export default {
           this.mapTimeSettings.Extent[this.mapTimeSettings.DateIndex],
           config.layerDateArray,
           config.layerTimeStep,
+          config.layerIntervals,
         )
         if (!sameMR) {
           layer.getSource().updateParams({
@@ -532,6 +555,7 @@ export default {
           layerEndTime: new Date(config.layerEndTime),
           layerTimeStep: config.layerTimeStep,
           layerTrueTimeStep: config.layerTrueTimeStep,
+          layerIntervals: config.layerIntervals,
         })
         this.expiredSnackBarMessage = this.t('ExpiredTimesteps')
         this.timeoutDuration = 6000

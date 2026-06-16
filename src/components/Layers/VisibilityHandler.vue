@@ -78,6 +78,7 @@ export default {
         this.mapTimeSettings.Extent[this.mapTimeSettings.DateIndex],
         imageLayer.get('layerDateArray'),
         imageLayer.get('layerTimeStep'),
+        imageLayer.get('layerIntervals'),
       )
       imageLayer.setProperties({
         layerDateIndex: layerDateIndex,

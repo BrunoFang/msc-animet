@@ -238,6 +238,7 @@ export default {
         layerEndTime: layerEndTime,
         layerTimeStep: config.layerTimeStep,
         layerTrueTimeStep: config.layerTrueTimeStep,
+        layerIntervals: config.layerIntervals,
       })
       this.store.addTimestep(imageLayer.get('layerTimeStep'))
       if (layerData.isSnapped) {
@@ -253,6 +254,7 @@ export default {
           this.mapTimeSettings.Extent[this.mapTimeSettings.DateIndex],
           imageLayer.get('layerDateArray'),
           imageLayer.get('layerTimeStep'),
+          imageLayer.get('layerIntervals'),
         )
         imageLayer.setProperties({
           layerDateIndex: layerDateIndex,
@@ -348,6 +350,7 @@ export default {
             mapTime,
             dateArray,
             layer.get('layerTimeStep'),
+            layer.get('layerIntervals'),
           )
           layer.setProperties({
             layerDateIndex: layerDateIndex,
@@ -603,6 +606,7 @@ export default {
                     globalTime,
                     dateArray,
                     layer.get('layerTimeStep'),
+                    layer.get('layerIntervals'),
                   )
 
                   if (layerTargetIndex >= 0) {
@@ -624,6 +628,7 @@ export default {
                     globalTime,
                     dateArray,
                     layer.get('layerTimeStep'),
+                    layer.get('layerIntervals'),
                   )
 
                   if (layerTargetIndex >= 0) {
@@ -647,6 +652,7 @@ export default {
                   globalTime,
                   dateArray,
                   layer.get('layerTimeStep'),
+                  layer.get('layerIntervals'),
                 )
 
                 if (layerTargetIndex >= 0) {
@@ -666,6 +672,7 @@ export default {
                   globalTimeBackward,
                   dateArray,
                   layer.get('layerTimeStep'),
+                  layer.get('layerIntervals'),
                 )
 
                 if (layerTargetIndexBackward >= 0) {
@@ -700,15 +707,25 @@ export default {
         )
       }
 
+      const rawUrl = layer.getSource().getUrl()
+      const [baseUrl, existingQuery] = rawUrl.split('?') // split off ?token=public
+
+      // Merge existing query params into urlParams before sorting
+      if (existingQuery) {
+        new URLSearchParams(existingQuery).forEach((value, key) => {
+          if (!(key in urlParams)) urlParams[key] = value
+        })
+      }
+
       const queryString = Object.keys(urlParams)
-        .sort()
+        .sort((a, b) => a.localeCompare(b))
         .map(
           (key) =>
             `${encodeURIComponent(key)}=${encodeURIComponent(urlParams[key])}`,
         )
         .join('&')
 
-      const wmsUrl = `${layer.getSource().getUrl()}?${queryString}`
+      const wmsUrl = `${baseUrl}?${queryString}`
 
       await this.tileCache.preload(layerName, wmsUrl)
     },

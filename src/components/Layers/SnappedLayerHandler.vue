@@ -63,7 +63,17 @@
       </v-row>
       <v-row>
         {{ $t('LayerBarStepTooltip') }} :
-        {{ item.get('layerTrueTimeStep') }}
+        <template v-if="item.get('layerIntervals')">
+          {{
+            item
+              .get('layerIntervals')
+              .map((s) => s.iso)
+              .join(' → ')
+          }}
+        </template>
+        <template v-else>
+          {{ item.get('layerTrueTimeStep') || item.get('layerTimeStep') }}
+        </template>
       </v-row>
     </v-container>
   </v-tooltip>
