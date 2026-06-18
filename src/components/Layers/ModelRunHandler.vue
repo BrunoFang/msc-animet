@@ -111,6 +111,7 @@ export default {
           this.mapTimeSettings.Extent[this.mapTimeSettings.DateIndex],
           newDateArray,
           this.item.get('layerTimeStep'),
+          this.item.get('layerIntervals'),
         )
         this.item.setProperties({
           layerDateIndex: newLayerIndex,

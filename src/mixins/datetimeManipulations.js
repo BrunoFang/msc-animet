@@ -1,4 +1,4 @@
-import { DateTime, Interval } from 'luxon'
+import { DateTime, Duration, Interval } from 'luxon'
 import parseDuration from '../assets/parseHelper'
 
 export default {
@@ -124,7 +124,8 @@ export default {
       this.emitter.emit('updatePermalink')
     },
     createTimeLayerConfig(Dimension_time) {
-      let [dateArrayFormat, trueStep, Step] = this.findFormat(Dimension_time)
+      let [dateArrayFormat, trueStep, Step, intervals] =
+        this.findFormat(Dimension_time)
       if (dateArrayFormat === null) {
         return null
       }
@@ -135,32 +136,53 @@ export default {
         layerEndTime: dateArrayFormat[0][dateArrayFormat[0].length - 1],
         layerTimeStep: Step,
         layerTrueTimeStep: trueStep,
+        layerIntervals: intervals,
       }
     },
-    findLayerIndex(date, layerDateArr, step) {
+    findLayerIndex(date, layerDateArr, step, intervals = null) {
       let start = 0
       let end = layerDateArr.length - 1
+
       if (date <= layerDateArr[start]) {
-        if (date < layerDateArr[start]) {
-          return -1
-        } else {
-          return 0
-        }
+        return date < layerDateArr[start] ? -1 : 0
       } else if (date >= layerDateArr[end]) {
-        if (date >= parseDuration(step).add(layerDateArr[end])) {
+        const lastStep = intervals ? intervals[intervals.length - 1].iso : step
+        if (date >= parseDuration(lastStep).add(layerDateArr[end])) {
           return -2
         } else {
           return end
         }
       }
+
+      let searchStart = 0
+      let searchEnd = end
+      let activeStep = step
+
+      if (intervals) {
+        for (let s = 0; s < intervals.length; s++) {
+          const isLastSeg = s === intervals.length - 1
+          const nextSegStartDate = isLastSeg
+            ? null
+            : layerDateArr[intervals[s + 1].startIndex]
+
+          if (nextSegStartDate === null || date < nextSegStartDate) {
+            activeStep = intervals[s].iso
+            searchStart = intervals[s].startIndex
+            searchEnd = intervals[s].endIndex
+            break
+          }
+        }
+      }
+
+      start = searchStart
+      end = searchEnd
       while (start <= end) {
-        let mid = Math.floor((start + end) / 2)
-        let dateCeiling = parseDuration(step === 'PT0H' ? 'PT1H' : step).add(
-          layerDateArr[mid],
-        )
-        // If date is found
-        if (date >= layerDateArr[mid] && date < dateCeiling) return mid
-        else if (date >= dateCeiling) start = mid + 1
+        const mid = Math.floor((start + end) / 2)
+        const ceiling = parseDuration(
+          activeStep === 'PT0H' ? 'PT1H' : activeStep,
+        ).add(layerDateArr[mid])
+        if (date >= layerDateArr[mid] && date < ceiling) return mid
+        else if (date >= ceiling) start = mid + 1
         else end = mid - 1
       }
       return -3
@@ -187,17 +209,48 @@ export default {
         // transform into single dates since there are likely multiple formats
         case /^[^,]*\/[^,]*\/[^,]*(?:,[^,]*\/[^,]*\/[^,]*)*$/.test(dateRange): {
           let dateArray = []
-          let dateRanges = dateRange.split(',')
-          for (let i = 0; i < dateRanges.length; i++) {
-            let [startDateStr, endDateStr, interval] = dateRanges[i].split('/')
-            dateArray = dateArray.concat(
-              this.getDateArray(startDateStr, endDateStr, interval)[0],
+          let segments = []
+          let format = 'ISO'
+          let minIso = null
+
+          for (const range of dateRange.split(',')) {
+            const [startDateStr, endDateStr, interval] = range.split('/')
+            const [chunk, chunkFormat] = this.getDateArray(
+              startDateStr,
+              endDateStr,
+              interval,
             )
+            if (chunkFormat !== 'ISO') format = chunkFormat
+
+            const effectiveIso = interval === 'PT0H' ? 'PT1H' : interval
+            if (
+              minIso === null ||
+              Duration.fromISO(effectiveIso).toMillis() <
+                Duration.fromISO(minIso).toMillis()
+            ) {
+              minIso = effectiveIso
+            }
+
+            const lastSeg = segments[segments.length - 1]
+            if (lastSeg && lastSeg.iso === effectiveIso) {
+              lastSeg.endIndex = dateArray.length + chunk.length - 1
+            } else {
+              segments.push({
+                iso: effectiveIso,
+                startIndex: dateArray.length,
+                endIndex: dateArray.length + chunk.length - 1,
+              })
+            }
+            dateArray = dateArray.concat(chunk)
           }
-          const arrayToCSV = dateArray
-            .map((dateObj) => dateObj.toISOString())
-            .join(',')
-          return this.findFormat(arrayToCSV)
+
+          const hasMultipleSteps = segments.length > 1
+          return [
+            [dateArray, format],
+            null,
+            minIso,
+            hasMultipleSteps ? segments : null,
+          ]
         }
         // special case mostly for ECMWF that looks like start1,date2/end1/step,start2/end2/step2
         // so this is simply to put start1 inside the first interval
@@ -248,25 +301,86 @@ export default {
       }
 
       let interval
+      let intervals = null
       if (dateRange.length > 1) {
+        const dateRangeLength = dateRange.length
+        const durationSet = new Set()
+
         let probeStart = Interval.fromDateTimes(
           DateTime.fromISO(dateRange[0], { zone: 'utc' }),
           DateTime.fromISO(dateRange[1], { zone: 'utc' }),
         ).toDuration(['years', 'months', 'hours', 'minutes'])
-        let probeNext
-        const dateRangeLength = dateRange.length
+        durationSet.add(probeStart.toISO())
+
         for (let i = 2; i < dateRangeLength; i++) {
-          probeNext = Interval.fromDateTimes(
+          const probeNext = Interval.fromDateTimes(
             DateTime.fromISO(dateRange[i - 1], { zone: 'utc' }),
             DateTime.fromISO(dateRange[i], { zone: 'utc' }),
           ).toDuration(['years', 'months', 'hours', 'minutes'])
-          if (!probeStart.equals(probeNext)) {
-            if (probeNext.toMillis() < probeStart.toMillis()) {
-              probeStart = probeNext
-            }
+          durationSet.add(probeNext.toISO())
+          if (
+            !probeStart.equals(probeNext) &&
+            probeNext.toMillis() < probeStart.toMillis()
+          ) {
+            probeStart = probeNext
           }
         }
-        interval = probeStart.toISO()
+
+        const allMs = Array.from(durationSet).map((iso) =>
+          Duration.fromISO(iso).toMillis(),
+        )
+        const minMs = Math.min(...allMs)
+        const maxMs = Math.max(...allMs)
+        const jitterThreshold = 0.1
+
+        if ((maxMs - minMs) / minMs < jitterThreshold) {
+          // Special case for small jitter around a single step,
+          // treat as one interval with the smallest step as the interval
+          interval = Duration.fromMillis(Math.floor(minMs / 1000) * 1000)
+            .shiftTo('days', 'hours', 'minutes', 'seconds')
+            .toISO()
+          intervals = null
+        } else {
+          // Meaningfully distinct steps — build segments
+          interval = Duration.fromMillis(Math.floor(minMs / 1000) * 1000)
+            .shiftTo('days', 'hours', 'minutes', 'seconds')
+            .toISO()
+
+          const segments = []
+          let segStartIndex = 0
+          let segIso = Interval.fromDateTimes(
+            DateTime.fromISO(dateRange[0], { zone: 'utc' }),
+            DateTime.fromISO(dateRange[1], { zone: 'utc' }),
+          )
+            .toDuration(['years', 'months', 'hours', 'minutes'])
+            .toISO()
+
+          for (let i = 2; i < dateRangeLength; i++) {
+            const currentIso = Interval.fromDateTimes(
+              DateTime.fromISO(dateRange[i - 1], { zone: 'utc' }),
+              DateTime.fromISO(dateRange[i], { zone: 'utc' }),
+            )
+              .toDuration(['years', 'months', 'hours', 'minutes'])
+              .toISO()
+
+            if (currentIso !== segIso) {
+              segments.push({
+                iso: segIso,
+                startIndex: segStartIndex,
+                endIndex: i - 2,
+              })
+              segStartIndex = i - 1
+              segIso = currentIso
+            }
+          }
+          segments.push({
+            iso: segIso,
+            startIndex: segStartIndex,
+            endIndex: dateRangeLength - 1,
+          })
+
+          intervals = segments.length > 1 ? segments : null
+        }
       } else {
         if (format === 'ISO') {
           interval = 'PT1H'
@@ -277,7 +391,7 @@ export default {
         }
       }
 
-      return [[dateArray, format], null, interval]
+      return [[dateArray, format], null, interval, intervals]
     },
     getProperDateString(date, dateFormat) {
       if (dateFormat === 'year') {

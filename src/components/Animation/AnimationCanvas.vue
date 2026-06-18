@@ -325,6 +325,7 @@ export default {
           driverDate,
           dateArray,
           visibleTLayers[i].get('layerTimeStep'),
+          visibleTLayers[i].get('layerIntervals'),
         )
         visibleTLayers[i].setProperties({
           layerDateIndex: layerDateIndex,
